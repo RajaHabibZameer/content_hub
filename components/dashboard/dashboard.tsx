@@ -11,33 +11,53 @@ import { PostQueueCard } from './post-queue-card'
 import { StatsCards } from './stats-cards'
 import { SettingsPage } from './settings-page'
 import { GenerateToolbar } from './generate-toolbar'
+import { SocialUploads } from './social-uploads'  // ← New Import
 
 import { type Product, type GeneratedContent, type QueueItem } from '@/lib/mock-data'
 import { Empty, EmptyHeader, EmptyMedia, EmptyTitle, EmptyDescription } from '@/components/ui/empty'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import { Badge } from '@/components/ui/badge'
-import { Package, Video, ListTodo, CheckSquare, AlertCircle, RefreshCw, Wifi, WifiOff } from 'lucide-react'
+import { 
+  Package, 
+  Video, 
+  ListTodo, 
+  CheckSquare, 
+  AlertCircle, 
+  RefreshCw, 
+  Wifi, 
+  WifiOff, 
+  Clock 
+} from 'lucide-react'
 
 // Fetcher for SWR
 const fetcher = (url: string) => fetch(url).then(res => res.json())
 
-type TabType = 'dashboard' | 'products' | 'queue' | 'content' | 'settings' | 'library' | 'upload'
+type TabType = 'dashboard' | 'products' | 'queue' | 'content' | 'settings' | 'library' | 'upload' 
 
 // Global refresh interval - 30 seconds
 const REFRESH_INTERVAL = 30000
 
 export function Dashboard() {
   const instanceId = useId()
+  
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const [activeTab, setActiveTab] = useState<TabType>('dashboard')
   
+  // Products Selection
   const [selectedProducts, setSelectedProducts] = useState<Product[]>([])
+  
+  // Generated Content Selection (Bulk Actions)
+  const [selectedContent, setSelectedContent] = useState<GeneratedContent[]>([])
+  
   const [uploadingId, setUploadingId] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [isGenerating, setIsGenerating] = useState(false)
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null)
   const [isOnline, setIsOnline] = useState(true)
+
+  // Bulk Scheduled Post State
+  const [scheduledDateTime, setScheduledDateTime] = useState('')
 
   // Track online status
   useEffect(() => {
@@ -53,7 +73,7 @@ export function Dashboard() {
     }
   }, [])
 
-  // Products from Google Sheet
+  // SWR Data Fetching
   const { data: productsData, error: productsError, isLoading: productsLoading, mutate: mutateProducts } = useSWR<{ products: Product[], error?: string }>(
     '/api/products',
     fetcher,
@@ -65,7 +85,6 @@ export function Dashboard() {
     }
   )
 
-  // Queue from Google Sheet
   const { data: queueData, error: queueError, isLoading: queueLoading, mutate: mutateQueue } = useSWR<{ queue: QueueItem[] }>(
     '/api/queue',
     fetcher,
@@ -77,7 +96,6 @@ export function Dashboard() {
     }
   )
 
-  // Generated Content from Google Sheet (NEW)
   const { 
     data: generatedData, 
     error: generatedError, 
@@ -101,7 +119,7 @@ export function Dashboard() {
   const fetchProductsError = productsData?.error || productsError?.message
   const fetchGeneratedError = generatedData?.error || generatedError?.message
 
-  // Calculate queue stats
+  // Queue Stats
   const queuedCount = queueItems.filter(q => q.status === 'queued').length
   const generatingCount = queueItems.filter(q => q.status === 'generating').length
   const generatedCount = queueItems.filter(q => q.status === 'generated').length
@@ -115,6 +133,7 @@ export function Dashboard() {
     toast.success('Data refreshed from Google Sheets')
   }, [mutateProducts, mutateQueue, mutateGenerated])
 
+  // Products Filtering
   const filteredProducts = useMemo(() => {
     if (!searchQuery.trim()) return products
     const query = searchQuery.toLowerCase()
@@ -123,6 +142,7 @@ export function Dashboard() {
     )
   }, [products, searchQuery])
 
+  // Product Selection Handlers
   const handleToggleSelect = useCallback((product: Product) => {
     setSelectedProducts(prev =>
       prev.some(p => p.id === product.id)
@@ -143,8 +163,22 @@ export function Dashboard() {
     setSelectedProducts([])
   }, [])
 
-  // Send selected products to n8n webhook
-  const handleGenerate = useCallback(async (contentType: 'ugc' | 'cgi' | 'ugc_cgi' | 'image') => {
+  // Content Selection Handlers
+  const handleToggleContentSelect = useCallback((content: GeneratedContent) => {
+    setSelectedContent(prev =>
+      prev.some(c => c.id === content.id)
+        ? prev.filter(c => c.id !== content.id)
+        : [...prev, content]
+    )
+  }, [])
+
+  const handleClearContentSelection = useCallback(() => {
+    setSelectedContent([])
+    setScheduledDateTime('')
+  }, [])
+
+  // Generate Content (Products → n8n)
+  const handleGenerate = useCallback(async (contentType: 'ugc' | 'cgi' | 'ugc_cgi' | 'image' |'both') => {
     if (selectedProducts.length === 0) return
     
     setIsGenerating(true)
@@ -169,8 +203,6 @@ export function Dashboard() {
       
       toast.success(`${selectedProducts.length} product(s) sent for ${contentType.toUpperCase()} generation!`)
       setSelectedProducts([])
-      
-      // Refresh queue after a delay
       setTimeout(() => mutateQueue(), 2000)
     } catch (error) {
       console.error('Failed to send to n8n:', error)
@@ -179,6 +211,95 @@ export function Dashboard() {
       setIsGenerating(false)
     }
   }, [selectedProducts, instanceId, mutateQueue])
+
+  // Bulk Scheduled Post
+  const handleBulkScheduledPost = async () => {
+    if (selectedContent.length === 0 || !scheduledDateTime) return
+
+    const isoTime = new Date(scheduledDateTime).toISOString()
+
+    try {
+      for (const item of selectedContent) {
+        await fetch('https://louenlou.app.n8n.cloud/webhook/post_scheduling', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content_id: item.id,
+            product_name: item.product_name,
+            content_type: item.content_type,
+            preview_url: item.link,
+            captions: item.caption,
+            hashtags: item.hashtag,
+            status: item.status,
+            scheduled_time: isoTime,
+          }),
+        })
+      }
+      toast.success(`${selectedContent.length} items scheduled successfully!`)
+      handleClearContentSelection()
+      mutateGenerated()
+    } catch {
+      toast.error('Failed to schedule posts')
+    }
+  }
+
+  // Bulk Post Now
+  const handleBulkPostNow = async () => {
+    if (selectedContent.length === 0) return
+
+    const nowISO = new Date().toISOString()
+
+    try {
+      for (const item of selectedContent) {
+        await fetch('https://louenlou.app.n8n.cloud/webhook/post_scheduling', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            content_id: item.id,
+            product_name: item.product_name,
+            content_type: item.content_type,
+            preview_url: item.link,
+            captions: item.caption,
+            hashtags: item.hashtag,
+            status: item.status,
+            scheduled_time: nowISO,
+          }),
+        })
+      }
+      toast.success(`${selectedContent.length} items posted now!`)
+      handleClearContentSelection()
+      mutateGenerated()
+    } catch {
+      toast.error('Failed to post now')
+    }
+  }
+
+  // Single Content Upload
+  const handleUploadToSocial = async (content: GeneratedContent, scheduledDateTime: string) => {
+    setUploadingId(content.id)
+    try {
+      await fetch('https://louenlou.app.n8n.cloud/webhook/post_scheduling', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content_id: content.id,
+          product_name: content.product_name,
+          content_type: content.content_type,
+          preview_url: content.link,
+          captions: content.caption,
+          hashtags: content.hashtag,
+          status: content.status,
+          scheduled_time: scheduledDateTime,
+        }),
+      })
+      toast.success(`Posted: ${content.product_name}`)
+      mutateGenerated()
+    } catch {
+      toast.error('Failed to post')
+    } finally {
+      setUploadingId(null)
+    }
+  }
 
   const handleRetry = async (item: QueueItem) => {
     try {
@@ -201,34 +322,6 @@ export function Dashboard() {
     }
   }
 
-  const handleUploadToSocial = async (content: GeneratedContent) => {
-    setUploadingId(content.id)
-    try {
-      await fetch('https://louenlou.app.n8n.cloud/webhook/post_scheduling', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content_id: content.id,
-          product_name: content.product_name,
-          content_type: content.content_type,
-          preview_url: content.link,
-          captions:content.caption,
-          hashtags:content.hashtag,
-         status:content.status
-
-        }),
-      })
-      await new Promise(r => setTimeout(r, 1500))
-      toast.success('Posted to social media!')
-      mutateGenerated() // Refresh content after upload
-    } catch {
-      toast.error('Failed to post')
-    } finally {
-      setUploadingId(null)
-    }
-  }
-
-  // Format last refresh time
   const formatLastRefresh = () => {
     if (!lastRefresh) return 'Never'
     const now = new Date()
@@ -238,7 +331,8 @@ export function Dashboard() {
     return lastRefresh.toLocaleTimeString()
   }
 
-  // Products Grid
+  // ==================== RENDER FUNCTIONS ====================
+
   const renderProductsGrid = () => {
     if (productsLoading) {
       return (
@@ -335,7 +429,6 @@ export function Dashboard() {
     )
   }
 
-  // Queue Grid
   const renderQueueGrid = () => {
     if (queueLoading) {
       return (
@@ -423,6 +516,7 @@ export function Dashboard() {
         </div>
 
         <main className="p-4 pb-24 lg:p-6 lg:pb-24">
+          {/* Dashboard Tab */}
           {activeTab === 'dashboard' && (
             <div className="space-y-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
@@ -443,6 +537,7 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* Products Tab */}
           {activeTab === 'products' && (
             <div className="space-y-6">
               <div>
@@ -453,24 +548,25 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* Queue Tab */}
           {activeTab === 'queue' && (
             <div className="space-y-6">
               <div>
                 <h1 className="text-2xl font-bold tracking-tight text-foreground">Post Queue</h1>
-                <p className="text-muted-foreground">Data coming directly from Google Sheet "Post Queue" - Auto refreshes every 30 seconds</p>
+                <p className="text-muted-foreground">Data coming directly from "Post Queue"</p>
               </div>
               {renderQueueGrid()}
             </div>
           )}
 
-          {/* ==================== GENERATED CONTENT TAB ==================== */}
+          {/* Generated Content Tab */}
           {activeTab === 'content' && (
             <div className="space-y-6">
               <div className="flex flex-wrap items-start justify-between gap-4">
                 <div>
                   <h1 className="text-2xl font-bold tracking-tight text-foreground">Generated Content</h1>
                   <p className="text-muted-foreground">
-                    Generated content from Google Sheet (Product name, Link, Caption, Hashtag, Type, Variation, Version, Status)
+                    Select multiple contents using checkbox • Schedule or Post Now in bulk
                   </p>
                 </div>
                 <Button 
@@ -483,6 +579,38 @@ export function Dashboard() {
                 </Button>
               </div>
 
+              {/* Bulk Action Bar */}
+              {selectedContent.length > 0 && (
+                <div className="sticky top-4 z-40 rounded-lg border bg-card p-4 shadow-lg">
+                  <div className="flex items-center justify-between mb-3">
+                    <span className="font-medium">{selectedContent.length} items selected</span>
+                    <Button variant="ghost" size="sm" onClick={handleClearContentSelection}>
+                      Clear Selection
+                    </Button>
+                  </div>
+                  <div className="flex flex-col sm:flex-row gap-3">
+                    <input
+                      type="datetime-local"
+                      value={scheduledDateTime}
+                      onChange={(e) => setScheduledDateTime(e.target.value)}
+                      className="flex-1 rounded-md border border-input bg-background px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-primary"
+                    />
+                    <Button
+                      onClick={handleBulkScheduledPost}
+                      disabled={!scheduledDateTime}
+                      className="gap-2"
+                    >
+                      <Clock className="h-4 w-4" />
+                      Schedule Post
+                    </Button>
+                    <Button onClick={handleBulkPostNow} variant="default">
+                      Post Now
+                    </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* Content Grid */}
               {generatedLoading ? (
                 <div className="flex min-h-[300px] items-center justify-center">
                   <div className="flex flex-col items-center gap-4">
@@ -521,6 +649,8 @@ export function Dashboard() {
                       content={content}
                       onUpload={handleUploadToSocial}
                       isUploading={uploadingId === content.id}
+                      isSelected={selectedContent.some(c => c.id === content.id)}
+                      onToggleSelect={handleToggleContentSelect}
                     />
                   ))}
                 </div>
@@ -528,22 +658,18 @@ export function Dashboard() {
             </div>
           )}
 
+          {/* New: Social Uploads Tab */}
+          {activeTab === 'upload' && <SocialUploads />}
+
+          {/* Settings Tab */}
           {activeTab === 'settings' && <SettingsPage />}
 
-          {(activeTab === 'library' || activeTab === 'upload') && (
-            <div className="flex min-h-[400px] items-center justify-center">
-              <Empty>
-                <EmptyHeader>
-                  <EmptyMedia variant="icon"><Package className="h-6 w-6" /></EmptyMedia>
-                  <EmptyTitle>Coming Soon</EmptyTitle>
-                </EmptyHeader>
-              </Empty>
-            </div>
-          )}
+          {/* Library & Upload Tab (Coming Soon) */}
+        
         </main>
       </div>
 
-      {/* Bottom Toolbar */}
+      {/* Bottom Toolbar - Only for Products */}
       <GenerateToolbar
         selectedCount={selectedProducts.length}
         onClear={handleClearSelection}

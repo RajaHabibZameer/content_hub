@@ -27,7 +27,6 @@ const navigation = [
   { name: 'Products', icon: Package, id: 'products' },
   { name: 'Post Queue', icon: ListTodo, id: 'queue' },
   { name: 'Generated Content', icon: Video, id: 'content' },
-  { name: 'Media Library', icon: Image, id: 'library' },
   { name: 'Social Upload', icon: Upload, id: 'upload' },
 ]
 
