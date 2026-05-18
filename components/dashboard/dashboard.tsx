@@ -178,39 +178,47 @@ export function Dashboard() {
   }, [])
 
   // Generate Content (Products → n8n)
-  const handleGenerate = useCallback(async (contentType: 'ugc' | 'cgi' | 'ugc_cgi' | 'image' |'both') => {
-    if (selectedProducts.length === 0) return
-    
-    setIsGenerating(true)
-    
-    try {
-      for (let i = 0; i < selectedProducts.length; i++) {
-        const product = selectedProducts[i]
-        
-        await fetch('https://louenlou.app.n8n.cloud/webhook/Post_Queue', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            product_name: product.name,
-            description: product.description,
-            image_url: product.image_url,
-            category: product.category,
-            content_type: contentType,
-            queue_id: `${instanceId}-${Date.now()}-${i}-${contentType}`,
-          }),
-        })
-      }
+  const handleGenerate = useCallback(async (
+  contentType: 'ugc' | 'cgi' | 'ugc_cgi' | 'image' | 'both',
+  imageVariant?: 'product' | 'actor'
+) => {
+  if (selectedProducts.length === 0) return
+  
+  setIsGenerating(true)
+  
+  try {
+    for (let i = 0; i < selectedProducts.length; i++) {
+      const product = selectedProducts[i]
       
-      toast.success(`${selectedProducts.length} product(s) sent for ${contentType.toUpperCase()} generation!`)
-      setSelectedProducts([])
-      setTimeout(() => mutateQueue(), 2000)
-    } catch (error) {
-      console.error('Failed to send to n8n:', error)
-      toast.error('Failed to send to queue')
-    } finally {
-      setIsGenerating(false)
+      await fetch('https://louenlou.app.n8n.cloud/webhook/Post_Queue', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          product_name: product.name,
+          description: product.description,
+          image_url: product.image_url,
+          category: product.category,
+
+          // ✅ ONLY ADD THIS (IMPORTANT)
+          content_type: contentType,
+          image_variant: imageVariant || null,
+
+          queue_id: `${instanceId}-${Date.now()}-${i}-${contentType}`,
+        }),
+      })
     }
-  }, [selectedProducts, instanceId, mutateQueue])
+    
+    toast.success(`${selectedProducts.length} product(s) sent for ${contentType.toUpperCase()} generation!`)
+    setSelectedProducts([])
+    setTimeout(() => mutateQueue(), 2000)
+
+  } catch (error) {
+    console.error('Failed to send to n8n:', error)
+    toast.error('Failed to send to queue')
+  } finally {
+    setIsGenerating(false)
+  }
+}, [selectedProducts, instanceId, mutateQueue])
 
   // Bulk Scheduled Post
   const handleBulkScheduledPost = async () => {
@@ -313,6 +321,7 @@ export function Dashboard() {
           category: item.product.category,
           content_type: item.content_type,
           queue_id: item.id,
+        
         }),
       })
       await mutateQueue()
